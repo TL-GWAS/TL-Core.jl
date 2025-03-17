@@ -104,6 +104,16 @@ end
     n_treat_comb_order_3 = 2
     ngroups = 2
     @test ngroups*n_traits*(2n_treat_comb_order_2+n_treat_comb_order_3) == 96
+    # Check estimands that include an extra treatment adjust covariates as required
+    for estimand ∈ estimands
+        treatments = get_treatments(estimand)
+        outcome_extra_covariates = get_outcome_extra_covariates(estimand)
+        if :TREAT_1 ∈ treatments
+            @test :TREAT_1 ∉ outcome_extra_covariates
+        else
+            @test :TREAT_1 ∈ outcome_extra_covariates
+        end
+    end
 end
 
 @testset "Test inputs_from_config from groups: with positivity constraint" begin
