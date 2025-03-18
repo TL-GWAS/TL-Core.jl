@@ -54,19 +54,29 @@ function try_append_new_estimands!(
     end
 end
 
-function estimands_from_variants(
+function genome_wide_estimands(
     variants,
     dataset, 
     estimand_constructor, 
     outcomes, 
     confounders;
+    extra_treatments=[],
     outcome_extra_covariates=[],
     positivity_constraint=0.,
     verbosity=1
     )
     estimands = []
     for variant in variants
-        treatments = treatments_from_variant(variant, dataset)
+       
+        if isempty(extra_treatments)
+            treatments = treatments_from_variant(variant, dataset)
+        else
+            treatments = Dict(
+                treatments_from_variant(variant, dataset)..., 
+                (pair for extra in extra_treatments for pair in treatments_from_variant(string(extra), dataset))...
+            )
+        end
+        
         local Ψ
         try
             Ψ = factorialEstimands(
@@ -163,7 +173,7 @@ end
 """
     treatment_from_variant(variant, dataset)
 
-    Generate a key-value pair (dicitionary) for treatment structs.
+    Generate a key-value pair (dictionary) for treatment structs.
 """
 function treatments_from_variant(variant::String, dataset::DataFrame)
     variant_levels = sort(levels(dataset[!, variant], skipmissing=true))
@@ -171,13 +181,15 @@ function treatments_from_variant(variant::String, dataset::DataFrame)
 end
 
 function estimands_from_gwas(dataset, variants, outcomes, confounders; 
+    extra_treatments=extra_treatments,
     outcome_extra_covariates = [],
     positivity_constraint=0.,
     verbosity=0
     )
     variants_groups = Iterators.partition(variants, length(variants) ÷ Threads.nthreads())
     estimands_tasks = map(variants_groups) do variants
-        Threads.@spawn estimands_from_variants(variants, dataset, ATE, outcomes, confounders;
+        Threads.@spawn genome_wide_estimands(variants, dataset, ATE, outcomes, confounders;
+            extra_treatments=extra_treatments,
             outcome_extra_covariates=outcome_extra_covariates,
             positivity_constraint=positivity_constraint,
             verbosity=verbosity
@@ -187,6 +199,24 @@ function estimands_from_gwas(dataset, variants, outcomes, confounders;
     return vcat(estimands_partitions...)
 end
 
+function estimands_from_gweis(dataset, variants, outcomes, confounders;
+    extra_treatments=extra_treatments,
+    outcome_extra_covariates = [],
+    positivity_constraint=0.,
+    verbosity=0
+    )
+    variants_groups = Iterators.partition(variants, length(variants) ÷ Threads.nthreads())
+    estimands_tasks = map(variants_groups) do variants
+        Threads.@spawn genome_wide_estimands(variants, dataset, AIE, outcomes, confounders;
+            extra_treatments=extra_treatments,
+            outcome_extra_covariates=outcome_extra_covariates,
+            positivity_constraint=positivity_constraint,
+            verbosity=verbosity
+        )
+    end
+    estimands_partitions = fetch.(estimands_tasks)
+    return vcat(estimands_partitions...)
+end
 
 get_only_file_with_suffix(files, suffix) = files[only(findall(x -> endswith(x, suffix), files))]
 
@@ -210,7 +240,7 @@ function get_genotypes_from_beds(bedprefix)
 end
 
 function make_genotypes(genotype_prefix, config, call_threshold)
-    genotypes = if config["type"] == "gwas"
+    genotypes = if config["type"] == "gwas"|| config["type"] == "gweis"
         get_genotypes_from_beds(genotype_prefix)
     else
         variants_set = Set(retrieve_variants_list(config["variants"]))
@@ -263,10 +293,19 @@ function inputs_from_config(config_file, genotypes_prefix, traits_file, pcs_file
     elseif config_type == "gwas"
         variants = filter(!=("SAMPLE_ID"), names(genotypes))
         estimands_from_gwas(dataset, variants, outcomes, confounders;
+            extra_treatments=extra_treatments,
             outcome_extra_covariates=outcome_extra_covariates,
             positivity_constraint=positivity_constraint,
             verbosity=verbosity
         )
+    elseif config_type == "gweis"
+        variants = filter(!=("SAMPLE_ID"), names(genotypes))
+        estimands_from_gweis(dataset, variants, outcomes, confounders;
+            extra_treatments=extra_treatments,
+            outcome_extra_covariates=outcome_extra_covariates,
+            positivity_constraint=positivity_constraint,
+            verbosity=verbosity
+        )  
     else
         throw(ArgumentError(string("Unknown extraction type: ", config_type, ", use any of: (flat, groups, gwas)")))
     end

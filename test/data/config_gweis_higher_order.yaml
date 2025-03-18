@@ -1,0 +1,12 @@
+type: gweis
+
+extra_treatments:
+  - 22001
+  - BINARY_1
+  - BINARY_2
+
+outcome_extra_covariates:
+  - COV_1
+
+extra_confounders:
+  - 21003
